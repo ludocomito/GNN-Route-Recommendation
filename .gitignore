@@ -2,7 +2,8 @@ mlr_data/*
 map/*
 dataset/*
 checkpoints/**/*
+!checkpoints/model_stats
 wandb/
-_pycache_/
+__pycache__/
 
 !.gitkeep
