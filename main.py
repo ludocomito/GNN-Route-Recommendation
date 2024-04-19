@@ -165,6 +165,8 @@ if not args.debug_mode:
         "gnn_layers": args.gnn_layers,
         "trainable_embeddings": args.trainable_embeddings,
         "attention": args.attention,
+		"merging_strategy": args.merging_strategy,
+		"num_pref_layers": args.num_pref_layers
         }
     )
 
@@ -272,7 +274,7 @@ edge_index = torch.LongTensor(edge_index).T
 torch_graph = torch_geometric.data.Data(x = node_feats, edge_index = edge_index) # instantiate a torch geometric graph with the node features and edge index
 torch_graph = torch_graph.to(device)
 
-print("Initializing model")
+print(f"Initializing model, merging strategy: {args.merging_strategy}")
 
 model = Model(num_nodes = len(nodes_forward), 
                 graph = torch_graph, 
@@ -280,7 +282,9 @@ model = Model(num_nodes = len(nodes_forward),
                 args = args, 
                 embeddings = node_embeddings, 
                 mapping = edge_to_node_mapping,
-                traffic_matrix = None
+                traffic_matrix = None,
+				merging_strategy=args.merging_strategy,
+				num_pref_layers=args.num_pref_layers
             ).to(device)
 
 print("Model initialized")
@@ -498,6 +502,7 @@ def evaluate_no_hierarchy(data, num = 1000, with_correction = False, without_cor
 	results["recall"] = recall1
 	results["deepst"] = deepst
 	results["generated"] = list(zip(preserved_with_stamps, gens))
+
 	return results
 
 def save_model(path_model=CHECKPOINT_PATH, path_extras=CHECKPOINT_SUPPORT_PATH):
@@ -515,13 +520,13 @@ val_evals_till_now_precision.append(val_results["precision"])
 val_evals_till_now_recall.append(val_results["recall"])
 
 # Training loop
-best_deepst_acc = float('-inf')
+best_f1 = float('-inf')
 for epoch in tqdm(range(args.num_epochs), desc = "Epoch", unit="epochs", dynamic_ncols=True):
 
     random.shuffle(train_data)
     model.train()
-    for batch_num,k in tqdm(list(enumerate((range(0, len(train_data), 32)))), desc = "Batch", unit="steps" ,leave = True, dynamic_ncols=True):
-        partial = random.sample(train_data, 32) 
+    for batch_num,k in tqdm(list(enumerate((range(0, len(train_data), args.batch_size)))), desc = "Batch", unit="steps" ,leave = True, dynamic_ncols=True):
+        partial = random.sample(train_data, args.batch_size) 
         valid_trajs = len(partial)
 
         user_ids = torch.stack([uid for uid,_,_,_ in partial])
@@ -568,16 +573,16 @@ for epoch in tqdm(range(args.num_epochs), desc = "Epoch", unit="epochs", dynamic
     if (epoch+1)%args.eval_freq == 0:
         # save_model()
         # cprint('Model saved', 'yellow', attrs=['underline'])
-        tqdm.write(colored("\nDoing a partial evaluation on train set", "blue", attrs = ["bold", "underline"]))
-        tqdm.write(colored("\nStandard",  "cyan", attrs = ["bold", "reverse", "blink"]))
-        train_results =  evaluate_no_hierarchy(data = train_data, 
-                                                num = min(10000, len(train_data)),
-                                                with_correction = False, 
-                                                without_correction = True,
-                                                with_dijkstra = False)
-                                                
-        if not args.debug_mode:
-            wandb.log({"train/train_reachability": train_results["reachability"], "train/train_precision": train_results["precision"], "train/train_recall": train_results["recall"], "train/train_deepst": train_results["deepst"]})
+        #tqdm.write(colored("\nDoing a partial evaluation on train set", "blue", attrs = ["bold", "underline"]))
+        #tqdm.write(colored("\nStandard",  "cyan", attrs = ["bold", "reverse", "blink"]))
+        #train_results =  evaluate_no_hierarchy(data = train_data, 
+        #                                        num = min(10000, len(train_data)),
+        #                                        with_correction = False, 
+        #                                        without_correction = True,
+        #                                        with_dijkstra = False)
+        #                                        
+        #if not args.debug_mode:
+        #    wandb.log({"train/train_reachability": train_results["reachability"], "train/train_precision": train_results["precision"], "train/train_recall": train_results["recall"], "train/train_deepst": train_results["deepst"]})
         tqdm.write(colored("\nEvaluation on the validation set (size = {})".format(len(val_data)), "blue", attrs = ["bold", "underline"]))
         tqdm.write(colored("\nStandard",  "cyan", attrs = ["bold", "reverse", "blink"]))
         val_results = evaluate_no_hierarchy(data = val_data, 
@@ -585,11 +590,16 @@ for epoch in tqdm(range(args.num_epochs), desc = "Epoch", unit="epochs", dynamic
                                             with_correction = False,
                                             without_correction = True,
                                             with_dijkstra = False)
-        if not args.debug_mode:
-            wandb.log({"val/val_reachability": val_results["reachability"], "val/val_precision": val_results["precision"], "val/val_recall": val_results["recall"], "val/val_deepst": val_results["deepst"]})
 
-        if val_results["deepst"] > best_deepst_acc:
-            best_deepst_acc = val_results["deepst"]
+        val_precision = val_results["precision"]
+        val_recall = val_results["recall"]
+        val_f1 = 2*val_precision*val_recall/(val_precision + val_recall)
+        val_f1 = round(val_f1, 2)
+        if not args.debug_mode:
+            wandb.log({"val/val_f1":val_f1, "val/val_reachability": val_results["reachability"], "val/val_precision": val_results["precision"], "val/val_recall": val_results["recall"], "val/val_deepst": val_results["deepst"]})
+
+        if val_f1 > best_f1:
+            best_f1 = val_f1
             save_model()
             cprint('Model saved', 'yellow', attrs=['underline'])
 			
@@ -615,12 +625,32 @@ test_results = evaluate_no_hierarchy(data = test_data,
 									with_dijkstra = False)
 
 reachability = test_results["reachability"]
+avg_reach = test_results["avg_reachability"]
 precision = test_results["precision"]
 recall = test_results["recall"]
 deepst_acc = test_results["deepst"]
+f1 = 2*precision*recall/(precision + recall)
+# round f1 to 2 decimal places
+f1 = round(f1, 2)
+# Print model stats
+stats_file_path = MODEL_STATS_PATH + args.run_name + '.txt'
+
+with open(stats_file_path, "w") as file:
+	# Write formatted strings to the file
+	file.write(f"{args.run_name.upper()} MODEL STATS\n")
+	file.write(f"F1 score is                             {f1}%\n")
+	file.write("Precision is                            {}%\n".format(precision))
+	file.write("Recall is                               {}%\n".format(recall))
+	file.write("\n")  # Writing a newline character to mimic `print()`
+	file.write("%age of trips reached is                {}%\n".format(reachability))
+	file.write("Avg Reachability(across all trips) is   {}m\n".format(avg_reach[0]))
+	file.write("Avg Reach(across trips not reached) is  {}m\n".format(avg_reach[1]))
+	file.write("\n")  # Another newline character
+	file.write("Deepst's Accuracy metric is             {}%\n".format(deepst_acc))
 
 
-wandb.log({"test/test_reachability": reachability, "test/test_precision": precision, "test/test_recall": recall, "test/test_deepst": deepst_acc})
+if not args.debug_mode:
+    wandb.log({"test/test_F1": f1,"test/test_reachability": reachability, "test/test_precision": precision, "test/test_recall": recall, "test/test_deepst": deepst_acc})
 print("the script that was run here was - \n{}{}".format("python -i "," ".join(sys.argv)))
 
 wandb.finish()

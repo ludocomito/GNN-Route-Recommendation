@@ -1,0 +1,8 @@
+mlr_data/*
+map/*
+dataset/*
+checkpoints/**/*
+wandb/
+_pycache_/
+
+!.gitkeep

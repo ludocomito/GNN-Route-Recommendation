@@ -7,8 +7,8 @@ import torch_geometric
 from modules import *
 
 class Model(nn.Module):
-	def __init__(self, num_nodes, graph=None, device = "cpu", args = None, preferences_embedding_dim=128, single_embedding_dim=64, 
-                 num_users=180, num_transport_modes=3, embeddings = None, mapping=None, traffic_matrix = None):
+	def __init__(self, num_nodes, graph=None, device = "cpu", merging_strategy='cat', args = None, preferences_embedding_dim=128, single_embedding_dim=64, 
+                 num_users=180, num_transport_modes=3, embeddings = None, mapping=None, traffic_matrix = None, num_pref_layers=1):
 		super(Model, self).__init__()
 		self.args = args
 		if embeddings is None:
@@ -41,7 +41,7 @@ class Model(nn.Module):
 			self.self_attention = nn.MultiheadAttention(2*self.embeddings.weight.shape[1], args.num_heads)
 
 		self.preferences_embedding_model = PreferencesEmbeddingModel(preferences_embedding_dim, single_embedding_dim, 
-															   		num_users, num_transport_modes)
+															   		num_users, num_transport_modes, merging_strategy, num_pref_layers=num_pref_layers, attention=args.attention)
 
 		self.confidence_model = MLP(input_dim = input_size, output_dim = 1, num_layers = args.num_layers, hidden_dim = args.hidden_size) 
 

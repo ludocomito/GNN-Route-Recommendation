@@ -8,3 +8,4 @@ NODE_DATA = "map/nodes.shp"
 
 CHECKPOINT_PATH = "checkpoints/"
 CHECKPOINT_SUPPORT_PATH = "checkpoints/supports/"
+MODEL_STATS_PATH = "checkpoints/model_stats/"
