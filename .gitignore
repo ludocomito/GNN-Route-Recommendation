@@ -7,6 +7,6 @@ checkpoints/**/*
 !checkpoints/supports
 
 wandb/
-pycache/
+__pycache__/
 
 !.gitkeep
