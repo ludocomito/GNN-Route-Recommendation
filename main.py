@@ -146,10 +146,9 @@ def merge_dicts(dicts):
 # Get arg
 args = make_args()
 
-print(f'Debug_mode: {args.debug_mode}')
-print(f'store preferences: {args.use_preferences}')
+print(f'Debug_mode: {args.disable_debug_mode}')
 print(f'optimizer: {args.optimizer}')
-if not args.debug_mode:
+if not args.disable_debug_mode:
     print("Initializing wandb")
     # start a new wandb run to track this script
     wandb.init(
@@ -276,7 +275,7 @@ edge_index = torch.LongTensor(edge_index).T
 torch_graph = torch_geometric.data.Data(x = node_feats, edge_index = edge_index) # instantiate a torch geometric graph with the node features and edge index
 torch_graph = torch_graph.to(device)
 
-print(f"Initializing model, merging strategy: {args.merging_strategy}, use preferences: {args.use_preferences}")
+print(f"Initializing model, merging strategy: {args.merging_strategy}")
 
 model = Model(num_nodes = len(nodes_forward), 
                 graph = torch_graph, 
@@ -284,11 +283,9 @@ model = Model(num_nodes = len(nodes_forward),
                 args = args, 
                 embeddings = node_embeddings, 
                 mapping = edge_to_node_mapping,
-                traffic_matrix = None,
 				merging_strategy=args.merging_strategy,
 				num_pref_layers=args.num_pref_layers,
 				preferences_embedding_dim=args.preferences_embedding_dim,
-				use_preferences=args.use_preferences
             ).to(device)
 
 print("Model initialized")
@@ -300,9 +297,6 @@ sigmoid_function = nn.Sigmoid()
 if args.optimizer == 'adam':
 	optimizer = torch.optim.Adam(model.parameters(), lr=0.001, amsgrad=True)
 	scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0)
-
-elif args.optimizer == 'adamw':
-	optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, amsgrad=True)
 
 max_nbrs = max(len(nbr_array) for nbr_array in node_nbrs.values()) # max number of neighbours of any node in the graph
 num_nodes = len(forward)
@@ -363,8 +357,7 @@ def gen_paths_no_hierarchy(all_paths):
 def gen_paths_no_hierarchy_helper(all_paths):
 	global model, node_nbrs, max_nbrs, edge_to_node_mapping
 	global forward_interval_map
-	if args.traffic:
-		intervals = [forward_interval_map[(s)] for _,_,(s,_) in all_paths]
+
 	true_paths = [p for _,p,_,_ in all_paths]
 	user_ids = torch.stack([uid for uid,_,_,_ in all_paths])
 	transport_modes = torch.stack([tm for _,_,tm,_ in all_paths])
@@ -384,22 +377,13 @@ def gen_paths_no_hierarchy_helper(all_paths):
 			current = [c for c in current_temp for _ in node_nbrs[c]]
 			pot_next = [nbr for c in current_temp for nbr in node_nbrs[c]] 
 			dests = [t[-1] for c,t in zip(current_temp, true_paths) for _ in (node_nbrs[c] if c in node_nbrs else [])]
-			#print(f'current: {current}')
-   
+
 			# Expand user preferences to match the expanded 'current'
 			expanded_user_ids = torch.cat([user_ids[i].repeat(len(node_nbrs[current_temp[i]])) for i in range(len(current_temp))])
 			expanded_transport_modes = torch.cat([transport_modes[i].repeat(len(node_nbrs[current_temp[i]])) for i in range(len(current_temp))])
 			expanded_temporal_encodings = torch.cat([temporal_encodings[i].unsqueeze(0).repeat(len(node_nbrs[current_temp[i]]), 1) for i in range(len(current_temp))])
-
-
-			#print(f'user ids shape: {expanded_user_ids.shape}, transport modes shape: {expanded_transport_modes.shape}, temporal encodings shape: {expanded_temporal_encodings.shape}')
-			#print(f'expanded tempororal encodings[0]: {expanded_temporal_encodings[5]}')
-			traffic = None
-			if args.traffic:
-				traffic_chosen = [intervals[i] for i in pending]
-				traffic = [t for c,t in zip(current_temp, traffic_chosen) for _ in (node_nbrs[c] if c in node_nbrs else [])]
-			
-			unnormalized_confidence = model(current, dests, pot_next, expanded_user_ids, expanded_transport_modes, expanded_temporal_encodings, traffic)
+	
+			unnormalized_confidence = model(current, dests, pot_next, expanded_user_ids, expanded_transport_modes, expanded_temporal_encodings)
 
 			chosen = torch.argmax(unnormalized_confidence.reshape(-1, max_nbrs), dim = 1)
 			chosen = chosen.detach().cpu().tolist()
@@ -430,8 +414,7 @@ def dijkstra(true_trip):
 		current = [c for c in current_temp for _ in (node_nbrs[c] if c in node_nbrs else []) ]
 		pot_next = [nbr for c in current_temp for nbr in (node_nbrs[c] if c in node_nbrs else [])]
 		dests = [dest for c in current_temp for _ in (node_nbrs[c] if c in node_nbrs else [])]
-		traffic = None
-		unnormalized_confidence = model(current, dests, pot_next, traffic)
+		unnormalized_confidence = model(current, dests, pot_next)
 		unnormalized_confidence = -1*torch.nn.functional.log_softmax(unnormalized_confidence.reshape(-1, max_nbrs), dim = 1)
 		transition_nll = unnormalized_confidence.detach().cpu().tolist()
 	torch.cuda.empty_cache()
@@ -446,7 +429,7 @@ def dijkstra(true_trip):
 	path = [x for x in path]
 	return path
 
-def evaluate_no_hierarchy(data, num = 1000, with_correction = False, without_correction = True, with_dijkstra = False):
+def evaluate_no_hierarchy(data, num = 1000):
 	global map_node_osm_to_coords, map_edge_id_to_u_v, backward 
 	to_do = ["precision", "recall", "reachability", "avg_reachability", "acc", "nll", "generated"]
 	results = {s:None for s in to_do}
@@ -454,10 +437,8 @@ def evaluate_no_hierarchy(data, num = 1000, with_correction = False, without_cor
 	partial = random.sample(data, num)
 	
 	t1 = time.time()
-	if with_dijkstra:
-		gens = [dijkstra(t) for t in tqdm(partial, desc = "Dijkstra for generation", unit = "trip", dynamic_ncols=True)]
-	else:
-		gens = gen_paths_no_hierarchy(partial)
+
+	gens = gen_paths_no_hierarchy(partial)
 	elapsed = time.time() -t1
 	results["time"] = elapsed
 	jaccs = []
@@ -523,7 +504,7 @@ def save_model(path_model=CHECKPOINT_PATH, path_extras=CHECKPOINT_SUPPORT_PATH):
 
 # Initial evaluation
 tqdm.write(colored("\nInitial Eval on Validation set", "blue", attrs = ["bold", "underline"]))
-val_results = evaluate_no_hierarchy(data = val_data, num =len(val_data), with_correction = False, with_dijkstra = False)
+val_results = evaluate_no_hierarchy(data = val_data, num =len(val_data))
 val_evals_till_now_reachability.append(val_results["reachability"])
 val_evals_till_now_precision.append(val_results["precision"])
 val_evals_till_now_recall.append(val_results["recall"])
@@ -550,10 +531,7 @@ for epoch in tqdm(range(args.num_epochs), desc = "Epoch", unit="epochs", dynamic
         expanded_user_ids = torch.cat([user_ids[path_idx].repeat(len(node_nbrs[t[node_idx]]), 1) for path_idx, (_, t, _, _) in enumerate(partial) for node_idx in range(len(t)-1)]).squeeze()
         expanded_transport_modes = torch.cat([transport_modes[path_idx].repeat(len(node_nbrs[t[node_idx]]), 1) for path_idx, (_, t, _, _) in enumerate(partial) for node_idx in range(len(t)-1)]).squeeze()
         expanded_temporal_encodings = torch.cat([temporal_encodings[path_idx].unsqueeze(0).repeat(len(node_nbrs[t[node_idx]]), 1) for path_idx, (_, t, _, _) in enumerate(partial) for node_idx in range(len(t)-1)])
-
-        traffic = None
-
-        unnormalized_dist = model(current, dests, next_node, expanded_user_ids, expanded_transport_modes, expanded_temporal_encodings,traffic)
+        unnormalized_dist = model(current, dests, next_node, expanded_user_ids, expanded_transport_modes, expanded_temporal_encodings)
 
         num_preds = sum(len(t) -1 for _,t,_,_ in partial)	
         true_nbr_class = torch.LongTensor([(node_nbrs[t[i]].index(t[i+1])) for _,t,_,_ in partial for i in range(len(t)-1)]).to(device)
@@ -578,34 +556,19 @@ for epoch in tqdm(range(args.num_epochs), desc = "Epoch", unit="epochs", dynamic
             optimizer.step()
             torch.cuda.empty_cache()
     scheduler.step()
-    if not args.debug_mode:
+    if not args.disable_debug_mode:
         wandb.log({"train/loss": loss_curve[-1]})
     if (epoch+1)%args.eval_freq == 0:
-        # save_model()
-        # cprint('Model saved', 'yellow', attrs=['underline'])
-        #tqdm.write(colored("\nDoing a partial evaluation on train set", "blue", attrs = ["bold", "underline"]))
-        #tqdm.write(colored("\nStandard",  "cyan", attrs = ["bold", "reverse", "blink"]))
-        #train_results =  evaluate_no_hierarchy(data = train_data, 
-        #                                        num = min(10000, len(train_data)),
-        #                                        with_correction = False, 
-        #                                        without_correction = True,
-        #                                        with_dijkstra = False)
-        #                                        
-        #if not args.debug_mode:
-        #    wandb.log({"train/train_reachability": train_results["reachability"], "train/train_precision": train_results["precision"], "train/train_recall": train_results["recall"], "train/train_deepst": train_results["deepst"]})
         tqdm.write(colored("\nEvaluation on the validation set (size = {})".format(len(val_data)), "blue", attrs = ["bold", "underline"]))
         tqdm.write(colored("\nStandard",  "cyan", attrs = ["bold", "reverse", "blink"]))
         val_results = evaluate_no_hierarchy(data = val_data, 
-                                            num =len(val_data),
-                                            with_correction = False,
-                                            without_correction = True,
-                                            with_dijkstra = False)
+                                            num =len(val_data))
 
         val_precision = val_results["precision"]
         val_recall = val_results["recall"]
         val_f1 = 2*val_precision*val_recall/(val_precision + val_recall)
         val_f1 = round(val_f1, 2)
-        if not args.debug_mode:
+        if not args.disable_debug_mode:
             wandb.log({"val/val_f1":val_f1, "val/val_reachability": val_results["reachability"], "val/val_precision": val_results["precision"], "val/val_recall": val_results["recall"], "val/val_deepst": val_results["deepst"]})
 
             if val_f1 > best_f1:
@@ -630,9 +593,7 @@ tqdm.write(colored("\nAfter training for {} epochs, ".format(epoch + 1), "yellow
 tqdm.write(colored("FINAL EVALUATION ON TEST\n", "blue", attrs = ["bold", "underline"]))
 tqdm.write(colored("\nStandard",  "cyan", attrs = ["bold", "reverse", "blink"]))
 test_results = evaluate_no_hierarchy(data = test_data, 
-									num =len(test_data),
-									with_correction = True,
-									with_dijkstra = False)
+									num =len(test_data))
 
 reachability = test_results["reachability"]
 avg_reach = test_results["avg_reachability"]
@@ -659,7 +620,7 @@ with open(stats_file_path, "w") as file:
 	file.write("Deepst's Accuracy metric is             {}%\n".format(deepst_acc))
 
 
-if not args.debug_mode:
+if not args.disable_debug_mode:
     wandb.log({"test/test_F1": f1,"test/test_reachability": reachability, "test/test_precision": precision, "test/test_recall": recall, "test/test_deepst": deepst_acc})
 print("the script that was run here was - \n{}{}".format("python -i "," ".join(sys.argv)))
 

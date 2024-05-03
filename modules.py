@@ -14,9 +14,8 @@ class GNN(torch.nn.Module):
 		elif gnn_type == "GAT":
 			print("Using a GAT network")
 			layer_function = GATConv
-		elif gnn_type == "PGNN":
-			print("Using PGNN")
-			print("NOT IMPLEMENTED")
+		else:
+			print("CHECK GNN TYPE. ONLY GCN AND GAT SUPPORTED.")
 			raise SystemExit
 
 		self.layers = nn.ModuleList([layer_function(layer_sizes[i], layer_sizes[i+1]) for i in range(len(layer_sizes) - 1)])
