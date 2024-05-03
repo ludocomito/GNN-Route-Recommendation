@@ -147,6 +147,8 @@ def merge_dicts(dicts):
 args = make_args()
 
 print(f'Debug_mode: {args.debug_mode}')
+print(f'store preferences: {args.use_preferences}')
+print(f'optimizer: {args.optimizer}')
 if not args.debug_mode:
     print("Initializing wandb")
     # start a new wandb run to track this script
@@ -274,7 +276,7 @@ edge_index = torch.LongTensor(edge_index).T
 torch_graph = torch_geometric.data.Data(x = node_feats, edge_index = edge_index) # instantiate a torch geometric graph with the node features and edge index
 torch_graph = torch_graph.to(device)
 
-print(f"Initializing model, merging strategy: {args.merging_strategy}")
+print(f"Initializing model, merging strategy: {args.merging_strategy}, use preferences: {args.use_preferences}")
 
 model = Model(num_nodes = len(nodes_forward), 
                 graph = torch_graph, 
@@ -284,7 +286,9 @@ model = Model(num_nodes = len(nodes_forward),
                 mapping = edge_to_node_mapping,
                 traffic_matrix = None,
 				merging_strategy=args.merging_strategy,
-				num_pref_layers=args.num_pref_layers
+				num_pref_layers=args.num_pref_layers,
+				preferences_embedding_dim=args.preferences_embedding_dim,
+				use_preferences=args.use_preferences
             ).to(device)
 
 print("Model initialized")
@@ -293,7 +297,12 @@ print("Initializing training parameters")
 
 loss_function_cross_entropy = nn.CrossEntropyLoss(reduction = "sum")
 sigmoid_function = nn.Sigmoid()	
-optimiser = torch.optim.Adam(model.parameters(), lr=0.001, amsgrad=True)
+if args.optimizer == 'adam':
+	optimizer = torch.optim.Adam(model.parameters(), lr=0.001, amsgrad=True)
+	scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0)
+
+elif args.optimizer == 'adamw':
+	optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, amsgrad=True)
 
 max_nbrs = max(len(nbr_array) for nbr_array in node_nbrs.values()) # max number of neighbours of any node in the graph
 num_nodes = len(forward)
@@ -564,10 +573,11 @@ for epoch in tqdm(range(args.num_epochs), desc = "Epoch", unit="epochs", dynamic
                 correct = 0
                 prob_sum = 0
             loss /= valid_trajs
-            optimiser.zero_grad()
+            optimizer.zero_grad()
             loss.backward()
-            optimiser.step()
+            optimizer.step()
             torch.cuda.empty_cache()
+    scheduler.step()
     if not args.debug_mode:
         wandb.log({"train/loss": loss_curve[-1]})
     if (epoch+1)%args.eval_freq == 0:
@@ -598,10 +608,10 @@ for epoch in tqdm(range(args.num_epochs), desc = "Epoch", unit="epochs", dynamic
         if not args.debug_mode:
             wandb.log({"val/val_f1":val_f1, "val/val_reachability": val_results["reachability"], "val/val_precision": val_results["precision"], "val/val_recall": val_results["recall"], "val/val_deepst": val_results["deepst"]})
 
-        if val_f1 > best_f1:
-            best_f1 = val_f1
-            save_model()
-            cprint('Model saved', 'yellow', attrs=['underline'])
+            if val_f1 > best_f1:
+                best_f1 = val_f1
+                save_model()
+                cprint('Model saved', 'yellow', attrs=['underline'])
 			
         val_evals_till_now_reachability.append(val_results["reachability"])
         val_evals_till_now_precision.append(val_results["precision"])

@@ -5,6 +5,7 @@ def make_args():
     parser = ArgumentParser()
     parser.add_argument("-embedding_size", default = 128, type = int)
     parser.add_argument("-hidden_size", default = 256, type = int)
+    parser.add_argument("-preferences_embedding_dim", default = 128, type = int)
     parser.add_argument("-num_layers", default = 3, type = int)
     parser.add_argument("-gnn", default = "GCN", type = str)
     parser.add_argument("-gnn_layers", default = 1, type = int)
@@ -22,6 +23,8 @@ def make_args():
     parser.add_argument("-merging_strategy", type = str, default='cat')
     parser.add_argument("-num_pref_layers", type = int, default=1)
     parser.add_argument("-batch_size", type = int, default=32)
+    parser.add_argument("-use_preferences",  default=True, action='store_false')
+    parser.add_argument("-optimizer", type = str, default='adam')
 
     args, unknown = parser.parse_known_args()
     if len(unknown)!= 0 and not args.ignore_unknown_args:
