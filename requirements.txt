@@ -1,0 +1,12 @@
+appdirs==1.4.4
+cligj==0.7.2
+fonttools==4.25.0
+mkl-service==2.4.0
+munkres==1.1.4
+protobuf==3.20.3
+setuptools==68.2.2
+torch==2.2.2
+torch_geometric @ file:///usr/share/miniconda/envs/test/conda-bld/pyg_1710961975896/work
+torchaudio==2.2.2
+torchvision==0.17.2
+wheel==0.41.2
