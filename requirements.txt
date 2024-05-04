@@ -6,7 +6,6 @@ munkres==1.1.4
 protobuf==3.20.3
 setuptools==68.2.2
 torch==2.2.2
-torch_geometric @ file:///usr/share/miniconda/envs/test/conda-bld/pyg_1710961975896/work
 torchaudio==2.2.2
 torchvision==0.17.2
 wheel==0.41.2
