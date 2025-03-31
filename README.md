@@ -115,6 +115,6 @@ If you use this code, please cite our paper:
 
 ## Authors
 
-- [Valerio Ponzi](https://github.com/valerioponzi) - Sapienza University of Rome
+- Valerio Ponzi - Sapienza University of Rome
 - [Ludovico Comito](https://github.com/ludocomito) - Sapienza University of Rome
-- [Christian Napoli](https://github.com/christiannapoli) - Sapienza University of Rome
+- Christian Napoli - Sapienza University of Rome
